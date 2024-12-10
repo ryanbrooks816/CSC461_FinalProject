@@ -8,6 +8,7 @@ from sklearn.cluster import KMeans
 from collections import Counter
 import random
 import numpy as np
+import pandas as pd
 
 class LoopDataset(Dataset):
     def __init__(self, loop_ids, cfg):        
@@ -139,7 +140,9 @@ class LoopDataset(Dataset):
 # returns three dataloaders for training, validation and testing
 def get_data_loaders(cfg):
     # grab all available loop groups
-    loop_ids = [d for d in os.listdir(cfg['data_path']) if len(d) == 36]
+    # loop_ids = [d for d in os.listdir(cfg['data_path']) if len(d) == 36]
+    df = pd.read_csv(cfg['csv_path'])
+    loop_ids = filter_loop_ids(df, cfg['filters'])
     # perform train/val/test split
     if cfg['stratification'] == 'random':
         tr_ids, va = train_test_split(loop_ids, test_size=0.2)
@@ -163,6 +166,38 @@ def get_data_loaders(cfg):
         DataLoader(te_d, batch_size=len(te_d), shuffle=False, num_workers=cfg['n_workers'], pin_memory=True)
     )
 
+# create another data loader function that implements leave-one-out cross-validation
+# returns a tuple of training and validation data loaders for each fold
+def get_data_loaders_loocv(cfg):
+    df = pd.read_csv(cfg['csv_path'])
+    # group ids by collection
+    applications = get_benchmark_applications(df, cfg['benchmark'])
+    print(f'Applications: {applications}')
+    loop_ids = {
+        app: filter_loop_ids(df, cfg['filters'] + [('application', '==', app)])
+        for app in applications
+    }
+        
+    data_loaders = []
+    for va_app in applications:
+        print(f'Validation application: {va_app}')
+        # validation set
+        va_ids = loop_ids[va_app]
+        va_d = LoopDataset(va_ids, cfg)
+        # training set
+        tr_ids = []
+        for tr_app in applications:
+            if tr_app != va_app:
+                tr_ids += loop_ids[tr_app]
+        tr_d = LoopDataset(tr_ids, cfg)
+        print(f'Total datapoints: {len(tr_d)+len(va_d)} Train: {len(tr_d)} Valid: {len(va_d)}')
+        data_loaders.append((
+            va_app,
+            DataLoader(tr_d, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['n_workers'], pin_memory=True),
+            DataLoader(va_d, batch_size=len(va_d), shuffle=False, num_workers=cfg['n_workers'], pin_memory=True)
+        ))
+    return data_loaders
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
@@ -184,7 +219,9 @@ def get_data_loaders_wandb(cfg):
     np.random.seed(cfg['seed'])
     random.seed(cfg['seed'])
     # grab all available loop groups
-    loop_ids = [d for d in os.listdir(cfg['data_path']) if len(d) == 36]
+    # loop_ids = [d for d in os.listdir(cfg['data_path']) if len(d) == 36]
+    df = pd.read_csv(cfg['csv_path'])
+    loop_ids = filter_loop_ids(df, cfg['filters'])
     # perform train/val/test split
     if cfg['stratification'] == 'random':
         tr_ids, va_ids = train_test_split(loop_ids, test_size=0.2, random_state=cfg['seed'])
@@ -248,3 +285,32 @@ def balanced_loop_groups_majority(loop_ids, data_path, splits, classes):
             loop_id_stats.append(torch.where((speedups > splits[i]) & (speedups < splits[i+1]), 1, 0).sum())
         loop_id_labels.append(classes[loop_id_stats.index(max(loop_id_stats))])
     return loop_id_labels
+
+
+# Get the loop group IDs that satisfy the given filters 
+# filters: [(column, comparator, value),]
+def filter_loop_ids(df, filters):
+    # Apply each filter with the given comparator
+    for column, comparator, value in filters:
+        if comparator == '==':
+            df = df[df[column] == value]
+        elif comparator == '!=':
+            df = df[df[column] != value]
+        elif comparator == '>':
+            df = df[df[column] > value]
+        elif comparator == '<':
+            df = df[df[column] < value]
+        elif comparator == '>=':
+            df = df[df[column] >= value]
+        elif comparator == '<=':
+            df = df[df[column] <= value]
+        else:
+            raise ValueError(f"Unsupported comparator: {comparator}")
+    
+    # Get the unique values from the 'id' column
+    unique_ids = df['id'].unique().tolist()
+    
+    return unique_ids
+
+def get_benchmark_applications(df, benchmark):
+    return df[df['benchmark'] == benchmark]['application'].unique()

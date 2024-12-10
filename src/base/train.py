@@ -94,6 +94,7 @@ def eval_metrics(preds, tgts, figures=False, mapping=None, type='regression', cl
 
 def eval_metrics_classification(preds, tgts, figures=False, mapping=None, classes=None):
     preds, tgts = preds.cpu(), tgts.cpu()
+    print(f'Number of unique targets: {tgts.unique().numel()}')
     acc1 = multiclass_accuracy(preds, tgts)
     print(f'Accuracy ({len(classes)}-way): {acc1:.4f}')
     acc2 = torch.eq(preds.argmax(dim=1)>2, tgts>2).float().mean() # NEED more elegant code here!!!
