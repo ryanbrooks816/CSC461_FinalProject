@@ -177,6 +177,10 @@ def get_data_loaders_loocv(cfg):
         app: filter_loop_ids(df, cfg['filters'] + [('application', '==', app)])
         for app in applications
     }
+    
+    # print the number of loop ids for each application
+    for app in applications:
+        print(f'{app}: {len(loop_ids[app])}')
         
     data_loaders = []
     for va_app in applications:
@@ -222,6 +226,7 @@ def get_data_loaders_wandb(cfg):
     # loop_ids = [d for d in os.listdir(cfg['data_path']) if len(d) == 36]
     df = pd.read_csv(cfg['csv_path'])
     loop_ids = filter_loop_ids(df, cfg['filters'])
+    loop_ids = filter_missing_loop_ids(loop_ids, cfg['data_path'])
     # perform train/val/test split
     if cfg['stratification'] == 'random':
         tr_ids, va_ids = train_test_split(loop_ids, test_size=0.2, random_state=cfg['seed'])
@@ -286,7 +291,6 @@ def balanced_loop_groups_majority(loop_ids, data_path, splits, classes):
         loop_id_labels.append(classes[loop_id_stats.index(max(loop_id_stats))])
     return loop_id_labels
 
-
 # Get the loop group IDs that satisfy the given filters 
 # filters: [(column, comparator, value),]
 def filter_loop_ids(df, filters):
@@ -306,11 +310,15 @@ def filter_loop_ids(df, filters):
             df = df[df[column] <= value]
         else:
             raise ValueError(f"Unsupported comparator: {comparator}")
-    
+        
     # Get the unique values from the 'id' column
-    unique_ids = df['id'].unique().tolist()
+    return df['id'].unique().tolist()
     
-    return unique_ids
+# make sure all the loop ids exist
+def filter_missing_loop_ids(loop_ids, data_path):
+    filtered_loop_ids = [l_id for l_id in loop_ids if os.path.exists(os.path.join(data_path, l_id))]
+    print(f'{len(filtered_loop_ids)} loop groups remaining ({len(loop_ids)-len(filtered_loop_ids)} removed)')
+    return filtered_loop_ids
 
 def get_benchmark_applications(df, benchmark):
     return df[df['benchmark'] == benchmark]['application'].unique()
